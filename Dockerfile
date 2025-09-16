@@ -19,8 +19,7 @@ RUN apt-get update && \
 COPY requirements.txt .
 
 # Install Python dependencies with Brotli support
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir brotli
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .

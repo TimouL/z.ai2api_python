@@ -32,6 +32,20 @@ class Settings(BaseSettings):
     SCAN_LIMIT: int = int(os.getenv("SCAN_LIMIT", "200000"))
     SKIP_AUTH_TOKEN: bool = os.getenv("SKIP_AUTH_TOKEN", "false").lower() == "true"
     
+    # Token Pool Configuration
+    TOKEN_FILE_PATH: str = os.getenv("TOKEN_FILE_PATH", "./tokens.txt")
+    TOKEN_MAX_FAILURES: int = int(os.getenv("TOKEN_MAX_FAILURES", "3"))
+    TOKEN_RELOAD_INTERVAL: int = int(os.getenv("TOKEN_RELOAD_INTERVAL", "60"))
+    
+    # Request Configuration
+    REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "120"))
+    CONNECTION_TIMEOUT: int = int(os.getenv("CONNECTION_TIMEOUT", "30"))
+    MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))
+    
+    # Proxy Configuration
+    HTTP_PROXY: Optional[str] = os.getenv("HTTP_PROXY")
+    HTTPS_PROXY: Optional[str] = os.getenv("HTTPS_PROXY")
+    
     # Browser Headers
     CLIENT_HEADERS: Dict[str, str] = {
         "Content-Type": "application/json",

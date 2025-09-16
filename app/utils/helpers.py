@@ -11,6 +11,7 @@ import requests
 from fake_useragent import UserAgent
 
 from app.core.config import settings
+from app.core.token_manager import token_manager
 
 # 全局 UserAgent 实例，避免每次调用都创建新实例
 _user_agent_instance = None
@@ -153,16 +154,23 @@ def get_anonymous_token() -> str:
 
 
 def get_auth_token() -> str:
-    """Get authentication token (anonymous or fixed)"""
+    """Get authentication token (anonymous or from token pool)"""
     if settings.ANONYMOUS_MODE:
         try:
             token = get_anonymous_token()
             debug_log(f"匿名token获取成功: {token[:10]}...")
             return token
         except Exception as e:
-            debug_log(f"匿名token获取失败，回退固定token: {e}")
+            debug_log(f"匿名token获取失败，使用token池: {e}")
     
-    return settings.BACKUP_TOKEN
+    # Use token pool for load balancing
+    token = token_manager.get_next_token()
+    if token:
+        debug_log(f"从token池获取token: {token[:10]}...")
+        return token
+    else:
+        debug_log("token池无可用token，使用配置文件备用token")
+        return settings.BACKUP_TOKEN
 
 
 def transform_thinking_content(content: str) -> str:
@@ -196,16 +204,56 @@ def call_upstream_api(
     headers = get_browser_headers(chat_id)
     headers["Authorization"] = f"Bearer {auth_token}"
     
+    # 准备请求数据
+    request_data = upstream_req.model_dump(exclude_none=True)
+    request_json = upstream_req.model_dump_json()
+    
     debug_log(f"调用上游API: {settings.API_ENDPOINT}")
-    debug_log(f"上游请求体: {upstream_req.model_dump_json()}")
+    debug_log(f"请求体大小: {len(request_json)} 字符")
     
-    response = requests.post(
-        settings.API_ENDPOINT,
-        json=upstream_req.model_dump(exclude_none=True),
-        headers=headers,
-        timeout=60.0,
-        stream=True
-    )
+    # 如果请求体太大，只显示部分内容
+    if len(request_json) > 1000:
+        debug_log(f"上游请求体 (截断): {request_json[:500]}...{request_json[-200:]}")
+    else:
+        debug_log(f"上游请求体: {request_json}")
     
-    debug_log(f"上游响应状态: {response.status_code}")
-    return response
+    # 设置代理（如果配置了）
+    proxies = {}
+    if settings.HTTP_PROXY:
+        proxies['http'] = settings.HTTP_PROXY
+    if settings.HTTPS_PROXY:
+        proxies['https'] = settings.HTTPS_PROXY
+    
+    try:
+        response = requests.post(
+            settings.API_ENDPOINT,
+            json=request_data,
+            headers=headers,
+            timeout=(settings.CONNECTION_TIMEOUT, settings.REQUEST_TIMEOUT),
+            stream=True,
+            proxies=proxies if proxies else None,
+            verify=True,
+        )
+        
+        debug_log(f"上游响应状态: {response.status_code}")
+        
+        # 检查响应头
+        if settings.DEBUG_LOGGING:
+            content_type = response.headers.get('content-type', 'unknown')
+            content_length = response.headers.get('content-length', 'unknown')
+            debug_log(f"响应类型: {content_type}, 长度: {content_length}")
+        
+        return response
+        
+    except requests.exceptions.Timeout as e:
+        debug_log(f"请求超时: {e}")
+        raise Exception(f"上游API请求超时: {e}")
+    except requests.exceptions.ConnectionError as e:
+        debug_log(f"连接错误: {e}")
+        raise Exception(f"上游API连接失败: {e}")
+    except requests.exceptions.RequestException as e:
+        debug_log(f"请求异常: {e}")
+        raise Exception(f"上游API请求失败: {e}")
+    except Exception as e:
+        debug_log(f"未知错误: {e}")
+        raise

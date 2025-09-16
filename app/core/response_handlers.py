@@ -15,6 +15,7 @@ from app.models.schemas import (
     UpstreamRequest, UpstreamData, UpstreamError, ModelItem
 )
 from app.utils.helpers import debug_log, call_upstream_api, transform_thinking_content
+from app.core.token_manager import token_manager
 from app.utils.sse_parser import SSEParser
 from app.utils.tools import extract_tool_invocations, remove_tool_json_content
 
@@ -61,11 +62,96 @@ class ResponseHandler:
     
     def _call_upstream(self) -> requests.Response:
         """Call upstream API with error handling"""
-        try:
-            return call_upstream_api(self.upstream_req, self.chat_id, self.auth_token)
-        except Exception as e:
-            debug_log(f"调用上游失败: {e}")
-            raise
+        max_retries = settings.MAX_RETRIES
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                debug_log(f"尝试调用上游API (第 {retry_count + 1}/{max_retries} 次)")
+                response = call_upstream_api(self.upstream_req, self.chat_id, self.auth_token)
+                
+                # Check if response is successful
+                if response.status_code == 200:
+                    # Mark token as successful
+                    token_manager.mark_token_success(self.auth_token)
+                    debug_log("上游API调用成功")
+                    return response
+                elif response.status_code in [401, 403]:
+                    # Authentication/authorization error - mark token as failed
+                    debug_log(f"Token认证失败 (状态码: {response.status_code}): {self.auth_token[:20]}...")
+                    token_manager.mark_token_failed(self.auth_token)
+                    
+                    # Try to get a new token
+                    new_token = token_manager.get_next_token()
+                    if new_token and new_token != self.auth_token:
+                        debug_log(f"尝试使用新token: {new_token[:20]}...")
+                        self.auth_token = new_token
+                        retry_count += 1
+                        continue
+                    else:
+                        debug_log("没有更多可用token")
+                        return response
+                elif response.status_code in [429]:
+                    # Rate limit - don't mark token as failed, just retry
+                    debug_log(f"遇到速率限制 (状态码: {response.status_code})，等待后重试")
+                    if retry_count < max_retries - 1:
+                        import time
+                        time.sleep(2 ** retry_count)  # 指数退避
+                        retry_count += 1
+                        continue
+                    else:
+                        return response
+                elif response.status_code >= 500:
+                    # Server error - retry without marking token as failed
+                    debug_log(f"服务器错误 (状态码: {response.status_code})，稍后重试")
+                    if retry_count < max_retries - 1:
+                        import time
+                        time.sleep(1)
+                        retry_count += 1
+                        continue
+                    else:
+                        return response
+                else:
+                    # Other client errors, return response as-is
+                    debug_log(f"客户端错误 (状态码: {response.status_code})")
+                    return response
+                    
+            except Exception as e:
+                error_msg = str(e)
+                debug_log(f"调用上游失败 (尝试 {retry_count + 1}/{max_retries}): {error_msg}")
+                
+                # 判断是否是连接问题还是token问题
+                is_connection_error = any(keyword in error_msg.lower() for keyword in [
+                    'connection', 'timeout', 'network', 'dns', 'socket', 'ssl'
+                ])
+                
+                if is_connection_error:
+                    debug_log("检测到网络连接问题，不标记token失败")
+                    # 网络问题不标记token失败，直接重试
+                    if retry_count < max_retries - 1:
+                        import time
+                        time.sleep(2)  # 等待2秒后重试
+                        retry_count += 1
+                        continue
+                    else:
+                        raise Exception(f"网络连接问题，重试{max_retries}次后仍失败: {error_msg}")
+                else:
+                    # 其他错误可能是token问题，标记失败并尝试新token
+                    debug_log("检测到可能的token问题，标记token失败")
+                    token_manager.mark_token_failed(self.auth_token)
+                    
+                    # Try to get a new token
+                    new_token = token_manager.get_next_token()
+                    if new_token and new_token != self.auth_token and retry_count < max_retries - 1:
+                        debug_log(f"尝试使用新token: {new_token[:20]}...")
+                        self.auth_token = new_token
+                        retry_count += 1
+                        continue
+                    else:
+                        raise
+        
+        # If we get here, all retries failed
+        raise Exception("所有重试尝试均失败")
     
     def _handle_upstream_error(self, response: requests.Response) -> None:
         """Handle upstream error response"""
@@ -108,28 +194,51 @@ class StreamResponseHandler(ResponseHandler):
         # Process stream
         debug_log("开始读取上游SSE流")
         sent_initial_answer = False
+        stream_ended_normally = False
         
-        with SSEParser(response, debug_mode=settings.DEBUG_LOGGING) as parser:
-            for event in parser.iter_json_data(UpstreamData):
-                upstream_data = event['data']
-                
-                # Check for errors
-                if self._has_error(upstream_data):
-                    error = self._get_error(upstream_data)
-                    yield from handle_upstream_error(error)
-                    break
-                
-                debug_log(f"解析成功 - 类型: {upstream_data.type}, 阶段: {upstream_data.data.phase}, "
-                         f"内容长度: {len(upstream_data.data.delta_content)}, 完成: {upstream_data.data.done}")
-                
-                # Process content
-                yield from self._process_content(upstream_data, sent_initial_answer)
-                
-                # Check if done
-                if upstream_data.data.done or upstream_data.data.phase == "done":
-                    debug_log("检测到流结束信号")
-                    yield from self._send_end_chunk()
-                    break
+        try:
+            with SSEParser(response, debug_mode=settings.DEBUG_LOGGING) as parser:
+                for event in parser.iter_json_data(UpstreamData):
+                    upstream_data = event['data']
+                    
+                    # Check for errors
+                    if self._has_error(upstream_data):
+                        error = self._get_error(upstream_data)
+                        yield from handle_upstream_error(error)
+                        stream_ended_normally = True
+                        break
+                    
+                    debug_log(f"解析成功 - 类型: {upstream_data.type}, 阶段: {upstream_data.data.phase}, "
+                             f"内容长度: {len(upstream_data.data.delta_content or '')}, 完成: {upstream_data.data.done}")
+                    
+                    # Process content
+                    yield from self._process_content(upstream_data, sent_initial_answer)
+                    
+                    # Update sent_initial_answer flag if we sent content
+                    if not sent_initial_answer and (upstream_data.data.delta_content or upstream_data.data.edit_content):
+                        sent_initial_answer = True
+                    
+                    # Check if done
+                    if upstream_data.data.done or upstream_data.data.phase == "done":
+                        debug_log("检测到流结束信号")
+                        yield from self._send_end_chunk()
+                        stream_ended_normally = True
+                        break
+                        
+        except Exception as e:
+            debug_log(f"SSE流处理异常: {e}")
+            # 流异常结束，发送错误响应
+            if not stream_ended_normally:
+                error_chunk = create_openai_response_chunk(
+                    model=settings.PRIMARY_MODEL,
+                    delta=Delta(content=f"\n\n[系统提示: 连接中断，响应可能不完整]")
+                )
+                yield f"data: {error_chunk.model_dump_json()}\n\n"
+        
+        # 确保流正常结束
+        if not stream_ended_normally:
+            debug_log("流未正常结束，发送结束信号")
+            yield from self._send_end_chunk(force_stop=True)
     
     def _has_error(self, upstream_data: UpstreamData) -> bool:
         """Check if upstream data contains error"""
@@ -203,15 +312,16 @@ class StreamResponseHandler(ResponseHandler):
         parts = edit_content.split("</details>")
         return parts[1] if len(parts) > 1 else ""
     
-    def _send_end_chunk(self) -> Generator[str, None, None]:
+    def _send_end_chunk(self, force_stop: bool = False) -> Generator[str, None, None]:
         """Send end chunk and DONE signal"""
         finish_reason = "stop"
         
-        if self.has_tools:
+        if self.has_tools and not force_stop:
             # Try to extract tool calls from buffered content
             self.tool_calls = extract_tool_invocations(self.buffered_content)
             
             if self.tool_calls:
+                debug_log(f"检测到工具调用: {len(self.tool_calls)} 个")
                 # Send tool calls with proper format
                 for i, tc in enumerate(self.tool_calls):
                     tool_call_delta = {
@@ -232,11 +342,21 @@ class StreamResponseHandler(ResponseHandler):
                 # Send regular content
                 trimmed_content = remove_tool_json_content(self.buffered_content)
                 if trimmed_content:
+                    debug_log(f"发送常规内容: {len(trimmed_content)} 字符")
                     content_chunk = create_openai_response_chunk(
                         model=settings.PRIMARY_MODEL,
                         delta=Delta(content=trimmed_content)
                     )
                     yield f"data: {content_chunk.model_dump_json()}\n\n"
+        elif force_stop:
+            # 强制结束时，发送缓冲的内容（如果有）
+            if self.buffered_content:
+                debug_log(f"强制结束，发送缓冲内容: {len(self.buffered_content)} 字符")
+                content_chunk = create_openai_response_chunk(
+                    model=settings.PRIMARY_MODEL,
+                    delta=Delta(content=self.buffered_content)
+                )
+                yield f"data: {content_chunk.model_dump_json()}\n\n"
         
         # Send final chunk
         end_chunk = create_openai_response_chunk(
@@ -245,7 +365,7 @@ class StreamResponseHandler(ResponseHandler):
         )
         yield f"data: {end_chunk.model_dump_json()}\n\n"
         yield "data: [DONE]\n\n"
-        debug_log("流式响应完成")
+        debug_log(f"流式响应完成 (finish_reason: {finish_reason})")
 
 
 class NonStreamResponseHandler(ResponseHandler):
@@ -272,23 +392,38 @@ class NonStreamResponseHandler(ResponseHandler):
         # Collect full response
         full_content = []
         debug_log("开始收集完整响应内容")
+        response_completed = False
         
-        with SSEParser(response, debug_mode=settings.DEBUG_LOGGING) as parser:
-            for event in parser.iter_json_data(UpstreamData):
-                upstream_data = event['data']
-                
-                if upstream_data.data.delta_content:
-                    content = upstream_data.data.delta_content
+        try:
+            with SSEParser(response, debug_mode=settings.DEBUG_LOGGING) as parser:
+                for event in parser.iter_json_data(UpstreamData):
+                    upstream_data = event['data']
                     
-                    if upstream_data.data.phase == "thinking":
-                        content = transform_thinking_content(content)
+                    if upstream_data.data.delta_content:
+                        content = upstream_data.data.delta_content
+                        
+                        if upstream_data.data.phase == "thinking":
+                            content = transform_thinking_content(content)
+                        
+                        if content:
+                            full_content.append(content)
                     
-                    if content:
-                        full_content.append(content)
-                
-                if upstream_data.data.done or upstream_data.data.phase == "done":
-                    debug_log("检测到完成信号，停止收集")
-                    break
+                    if upstream_data.data.done or upstream_data.data.phase == "done":
+                        debug_log("检测到完成信号，停止收集")
+                        response_completed = True
+                        break
+                        
+        except Exception as e:
+            debug_log(f"非流式响应收集异常: {e}")
+            if not full_content:
+                # 如果没有收集到任何内容，抛出异常
+                raise HTTPException(status_code=502, detail=f"Response collection failed: {str(e)}")
+            else:
+                debug_log(f"部分内容收集成功，继续处理 ({len(full_content)} 个片段)")
+        
+        if not response_completed and not full_content:
+            debug_log("响应未完成且无内容，可能是连接问题")
+            raise HTTPException(status_code=502, detail="Incomplete response from upstream")
         
         final_content = "".join(full_content)
         debug_log(f"内容收集完成，最终长度: {len(final_content)}")

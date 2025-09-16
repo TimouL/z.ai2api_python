@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core import openai
+from app.api import admin
 from app.utils.reload_config import RELOAD_CONFIG
 
 from granian import Granian
@@ -32,6 +33,7 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(openai.router)
+app.include_router(admin.router)
 
 
 @app.options("/")

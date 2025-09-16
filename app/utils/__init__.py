@@ -1,6 +1,7 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+"""
+Utils module initialization
+"""
 
-from app.utils import sse_tool_handler, reload_config, logger
+from app.utils import helpers, sse_parser, tools, reload_config
 
-__all__ = ["sse_tool_handler", "reload_config", "logger"]
+__all__ = ["helpers", "sse_parser", "tools", "reload_config"]

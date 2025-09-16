@@ -1,5 +1,6 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+"""
+Models module initialization
+"""
 
 from app.models import schemas
 

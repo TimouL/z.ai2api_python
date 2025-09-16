@@ -5,7 +5,6 @@
 .conda/
 *.zip
 *.txt
-*.pid
 docs/
 output/
 main.build/
@@ -14,8 +13,6 @@ main.onefile-build/
 *report.xml
 *.yaml
 logs/
-backup/
-uv.lock
 
 # AI Toolset
 .augment/

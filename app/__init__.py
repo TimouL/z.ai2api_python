@@ -1,5 +1,6 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+"""
+Application package initialization
+"""
 
 from app import core, models, utils
 

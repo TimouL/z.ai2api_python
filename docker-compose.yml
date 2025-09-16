@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  z-ai2api:
+    image: julienol/z-ai2api-python:latest
+    container_name: z-ai2api-python
+    ports:
+      - "8084:8080"
+    env_file:
+      - .env
+    volumes:
+      # 挂载token文件（如果使用token池功能）
+      - ./tokens.txt:/app/tokens.txt:ro
+      # 可选：挂载数据目录用于持久化token状态
+      - ./data:/app/data
+    restart: unless-stopped
+    # 添加宿主机网络访问支持
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - z-ai2api-network
+
+networks:
+  z-ai2api-network:
+    driver: bridge

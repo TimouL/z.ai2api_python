@@ -18,6 +18,7 @@ from app.utils.helpers import debug_log, call_upstream_api, transform_thinking_c
 from app.core.token_manager import token_manager
 from app.utils.sse_parser import SSEParser
 from app.utils.tools import extract_tool_invocations, remove_tool_json_content
+from app.utils.sse_tool_handler import SSEToolHandler
 
 
 def create_openai_response_chunk(
@@ -168,6 +169,8 @@ class StreamResponseHandler(ResponseHandler):
         self.has_tools = has_tools
         self.buffered_content = ""
         self.tool_calls = None
+        # Initialize SSE tool handler for improved tool processing
+        self.tool_handler = SSEToolHandler(chat_id, settings.PRIMARY_MODEL) if has_tools else None
     
     def handle(self) -> Generator[str, None, None]:
         """Handle streaming response"""
@@ -212,7 +215,7 @@ class StreamResponseHandler(ResponseHandler):
                              f"内容长度: {len(upstream_data.data.delta_content or '')}, 完成: {upstream_data.data.done}")
                     
                     # Process content
-                    yield from self._process_content(upstream_data, sent_initial_answer)
+                    yield from self._process_content_with_tools(upstream_data, sent_initial_answer)
                     
                     # Update sent_initial_answer flag if we sent content
                     if not sent_initial_answer and (upstream_data.data.delta_content or upstream_data.data.edit_content):
@@ -366,6 +369,34 @@ class StreamResponseHandler(ResponseHandler):
         yield f"data: {end_chunk.model_dump_json()}\n\n"
         yield "data: [DONE]\n\n"
         debug_log(f"流式响应完成 (finish_reason: {finish_reason})")
+
+    
+    def _process_content_with_tools(
+        self, 
+        upstream_data: UpstreamData, 
+        sent_initial_answer: bool
+    ) -> Generator[str, None, None]:
+        """Process content with improved tool handling"""
+        # Handle tool calls with improved SSE tool handler
+        if self.has_tools and self.tool_handler:
+            # Check if this is a tool_call phase
+            if upstream_data.data.phase == "tool_call":
+                # Use the improved tool handler for tool call processing
+                yield from self.tool_handler.process_tool_call_phase(
+                    upstream_data.data.model_dump(), 
+                    is_stream=True
+                )
+                return
+            elif upstream_data.data.phase == "other":
+                # Handle other phase which may contain tool completion signals
+                yield from self.tool_handler.process_other_phase(
+                    upstream_data.data.model_dump(), 
+                    is_stream=True
+                )
+                return
+        
+        # Fall back to original content processing
+        yield from self._process_content(upstream_data, sent_initial_answer)
 
 
 class NonStreamResponseHandler(ResponseHandler):

@@ -7,3 +7,4 @@ pydantic-core
 typing-inspection
 fake-useragent
 brotli
+httpx

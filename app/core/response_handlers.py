@@ -171,6 +171,8 @@ class StreamResponseHandler(ResponseHandler):
         self.tool_calls = None
         # Initialize SSE tool handler for improved tool processing
         self.tool_handler = SSEToolHandler(chat_id, settings.PRIMARY_MODEL) if has_tools else None
+        # 思考状态跟踪
+        self.first_thinking_chunk = True
     
     def handle(self) -> Generator[str, None, None]:
         """Handle streaming response"""
@@ -297,12 +299,30 @@ class StreamResponseHandler(ResponseHandler):
             if upstream_data.data.delta_content:
                 if content:
                     if upstream_data.data.phase == "thinking":
+                        # 第一个思考块添加<think>开始标签，其他块保持纯内容
+                        if self.first_thinking_chunk:
+                            formatted_content = f"<think>{content}"
+                            self.first_thinking_chunk = False
+                        else:
+                            formatted_content = content
+                        
                         debug_log(f"发送思考内容: {content}")
                         chunk = create_openai_response_chunk(
                             model=settings.PRIMARY_MODEL,
-                            delta=Delta(reasoning_content=content)
+                            delta=Delta(content=formatted_content)
                         )
                     else:
+                        # 如果从thinking阶段转到其他阶段，需要结束thinking标签
+                        if not self.first_thinking_chunk and upstream_data.data.phase == "answer":
+                            # 先发送思考结束标签
+                            thinking_end_chunk = create_openai_response_chunk(
+                                model=settings.PRIMARY_MODEL,
+                                delta=Delta(content="</think>")
+                            )
+                            yield f"data: {thinking_end_chunk.model_dump_json()}\n\n"
+                            # 重置状态
+                            self.first_thinking_chunk = True
+                        
                         debug_log(f"发送普通内容: {content}")
                         chunk = create_openai_response_chunk(
                             model=settings.PRIMARY_MODEL,
@@ -370,7 +390,8 @@ class StreamResponseHandler(ResponseHandler):
         yield "data: [DONE]\n\n"
         debug_log(f"流式响应完成 (finish_reason: {finish_reason})")
 
-    
+
+    
     def _process_content_with_tools(
         self, 
         upstream_data: UpstreamData, 
@@ -405,6 +426,9 @@ class NonStreamResponseHandler(ResponseHandler):
     def __init__(self, upstream_req: UpstreamRequest, chat_id: str, auth_token: str, has_tools: bool = False):
         super().__init__(upstream_req, chat_id, auth_token)
         self.has_tools = has_tools
+        # 思考状态跟踪
+        self.first_thinking_chunk = True
+        self.in_thinking_phase = False
     
     def handle(self) -> JSONResponse:
         """Handle non-streaming response"""
@@ -435,6 +459,25 @@ class NonStreamResponseHandler(ResponseHandler):
                         
                         if upstream_data.data.phase == "thinking":
                             content = transform_thinking_content(content)
+                            
+                            # 处理思考内容的分块格式
+                            if not self.in_thinking_phase:
+                                # 进入思考阶段，添加开始标签
+                                self.in_thinking_phase = True
+                                if self.first_thinking_chunk:
+                                    content = f"<think>{content}"
+                                    self.first_thinking_chunk = False
+                                else:
+                                    content = f"<think>{content}"
+                            # 如果已经在思考阶段，保持纯内容
+                        else:
+                            # 如果从thinking阶段转到其他阶段
+                            if self.in_thinking_phase:
+                                # 添加结束标签到前一个内容
+                                if full_content and not self.first_thinking_chunk:
+                                    full_content.append("</think>")
+                                self.in_thinking_phase = False
+                                self.first_thinking_chunk = True
                         
                         if content:
                             full_content.append(content)
@@ -455,6 +498,10 @@ class NonStreamResponseHandler(ResponseHandler):
         if not response_completed and not full_content:
             debug_log("响应未完成且无内容，可能是连接问题")
             raise HTTPException(status_code=502, detail="Incomplete response from upstream")
+        
+        # 如果响应结束时还在思考阶段，需要添加结束标签
+        if self.in_thinking_phase and not self.first_thinking_chunk:
+            full_content.append("</think>")
         
         final_content = "".join(full_content)
         debug_log(f"内容收集完成，最终长度: {len(final_content)}")

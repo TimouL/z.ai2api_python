@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     SCAN_LIMIT: int = int(os.getenv("SCAN_LIMIT", "200000"))
     SKIP_AUTH_TOKEN: bool = os.getenv("SKIP_AUTH_TOKEN", "false").lower() == "true"
     
+    # Signature Configuration - 强制禁用，忽略所有环境变量
+    ENABLE_SIGNATURE: bool = False  # 强制禁用签名验证
+    SIGNATURE_SECRET_KEY: str = "disabled"  # 已禁用
+    SIGNATURE_ALGORITHM: str = "disabled"   # 已禁用
+    
     # Token Pool Configuration
     TOKEN_FILE_PATH: str = os.getenv("TOKEN_FILE_PATH", "./tokens.txt")
     TOKEN_MAX_FAILURES: int = int(os.getenv("TOKEN_MAX_FAILURES", "3"))
@@ -46,17 +51,22 @@ class Settings(BaseSettings):
     HTTP_PROXY: Optional[str] = os.getenv("HTTP_PROXY")
     HTTPS_PROXY: Optional[str] = os.getenv("HTTPS_PROXY")
     
-    # Browser Headers
+    # Browser Headers - 匹配真实F12调试信息
     CLIENT_HEADERS: Dict[str, str] = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0",
+        "Accept": "*/*",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
         "Accept-Language": "zh-CN",
-        "sec-ch-ua": '"Not;A=Brand";v="99", "Microsoft Edge";v="139", "Chromium";v="139"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
-        "X-FE-Version": "prod-fe-1.0.70",
+        "Content-Type": "application/json", 
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0",
+        "Sec-Ch-Ua": '"Chromium";v="140", "Not=A?Brand";v="24", "Microsoft Edge";v="140"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "X-Fe-Version": "prod-fe-1.0.83",  # 匹配F12信息中的版本
         "Origin": "https://chat.z.ai",
+        "Connection": "keep-alive",
     }
     
     class Config:

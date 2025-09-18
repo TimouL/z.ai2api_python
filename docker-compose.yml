@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   z-ai2api:
     image: julienol/z-ai2api-python:latest

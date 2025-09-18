@@ -5,6 +5,9 @@ import json
 import time
 import uuid
 import random
+import hashlib
+import hmac
+import urllib.parse
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Generator, AsyncGenerator
 import httpx
@@ -27,31 +30,31 @@ def get_user_agent_instance() -> UserAgent:
     return _user_agent_instance
 
 
-def get_dynamic_headers(chat_id: str = "") -> Dict[str, str]:
+def get_dynamic_headers(chat_id: str = "", user_agent: str = "") -> Dict[str, str]:
     """生成动态浏览器headers，包含随机User-Agent"""
-    ua = get_user_agent_instance()
+    if not user_agent:
+        ua = get_user_agent_instance()
+        # 随机选择浏览器类型，偏向Chrome和Edge
+        browser_choices = ["chrome", "chrome", "chrome", "edge", "edge", "firefox", "safari"]
+        browser_type = random.choice(browser_choices)
 
-    # 随机选择浏览器类型，偏向Chrome和Edge
-    browser_choices = ["chrome", "chrome", "chrome", "edge", "edge", "firefox", "safari"]
-    browser_type = random.choice(browser_choices)
-
-    try:
-        if browser_type == "chrome":
-            user_agent = ua.chrome
-        elif browser_type == "edge":
-            user_agent = ua.edge
-        elif browser_type == "firefox":
-            user_agent = ua.firefox
-        elif browser_type == "safari":
-            user_agent = ua.safari
-        else:
+        try:
+            if browser_type == "chrome":
+                user_agent = ua.chrome
+            elif browser_type == "edge":
+                user_agent = ua.edge
+            elif browser_type == "firefox":
+                user_agent = ua.firefox
+            elif browser_type == "safari":
+                user_agent = ua.safari
+            else:
+                user_agent = ua.random
+        except:
             user_agent = ua.random
-    except:
-        user_agent = ua.random
 
     # 提取版本信息
-    chrome_version = "139"
-    edge_version = "139"
+    chrome_version = "140"  # 更新版本号匹配F12信息
+    edge_version = "140"
 
     if "Chrome/" in user_agent:
         try:
@@ -62,27 +65,32 @@ def get_dynamic_headers(chat_id: str = "") -> Dict[str, str]:
     if "Edg/" in user_agent:
         try:
             edge_version = user_agent.split("Edg/")[1].split(".")[0]
-            sec_ch_ua = f'"Microsoft Edge";v="{edge_version}", "Chromium";v="{chrome_version}", "Not_A Brand";v="24"'
+            sec_ch_ua = f'"Microsoft Edge";v="{edge_version}", "Chromium";v="{chrome_version}", "Not=A?Brand";v="24"'
         except:
-            sec_ch_ua = f'"Not_A Brand";v="8", "Chromium";v="{chrome_version}", "Google Chrome";v="{chrome_version}"'
+            sec_ch_ua = f'"Chromium";v="{chrome_version}", "Not=A?Brand";v="24", "Microsoft Edge";v="{edge_version}"'
     elif "Firefox/" in user_agent:
         sec_ch_ua = None  # Firefox不使用sec-ch-ua
     else:
-        sec_ch_ua = f'"Not_A Brand";v="8", "Chromium";v="{chrome_version}", "Google Chrome";v="{chrome_version}"'
+        sec_ch_ua = f'"Chromium";v="{chrome_version}", "Not=A?Brand";v="24", "Google Chrome";v="{chrome_version}"'
 
     headers = {
+        "Accept": "*/*",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Accept-Language": "zh-CN",
         "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
         "User-Agent": user_agent,
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "X-FE-Version": "prod-fe-1.0.79",
+        "X-Fe-Version": "prod-fe-1.0.83",  # 匹配F12信息中的版本
         "Origin": "https://chat.z.ai",
+        "Connection": "keep-alive",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors", 
+        "Sec-Fetch-Site": "same-origin",
     }
 
     if sec_ch_ua:
-        headers["sec-ch-ua"] = sec_ch_ua
-        headers["sec-ch-ua-mobile"] = "?0"
-        headers["sec-ch-ua-platform"] = '"Windows"'
+        headers["Sec-Ch-Ua"] = sec_ch_ua
+        headers["Sec-Ch-Ua-Mobile"] = "?0"
+        headers["Sec-Ch-Ua-Platform"] = '"Windows"'
 
     if chat_id:
         headers["Referer"] = f"https://chat.z.ai/c/{chat_id}"
@@ -95,6 +103,114 @@ def get_dynamic_headers(chat_id: str = "") -> Dict[str, str]:
 def generate_uuid() -> str:
     """生成UUID v4"""
     return str(uuid.uuid4())
+
+
+def generate_signature(data: str, timestamp: str, secret_key: str = "") -> str:
+    """生成请求签名
+    
+    Args:
+        data: 请求数据
+        timestamp: 时间戳
+        secret_key: 密钥（使用配置中的值）
+    
+    Returns:
+        签名字符串
+    """
+    if not settings.ENABLE_SIGNATURE:
+        return ""  # 如果禁用签名，返回空字符串
+        
+    if not secret_key:
+        secret_key = settings.SIGNATURE_SECRET_KEY
+    
+    # 构建签名字符串
+    sign_string = f"{data}{timestamp}{secret_key}"
+    
+    # 根据配置选择签名算法
+    if settings.SIGNATURE_ALGORITHM.lower() == "md5":
+        signature = hashlib.md5(sign_string.encode('utf-8')).hexdigest()
+    elif settings.SIGNATURE_ALGORITHM.lower() == "sha1":
+        signature = hashlib.sha1(sign_string.encode('utf-8')).hexdigest()
+    else:  # 默认使用sha256
+        signature = hashlib.sha256(sign_string.encode('utf-8')).hexdigest()
+    
+    return signature
+
+
+def build_query_params(
+    timestamp: int, 
+    request_id: str, 
+    token: str,
+    user_agent: str,
+    chat_id: str = ""
+) -> Dict[str, str]:
+    """构建查询参数，模拟真实的浏览器请求
+    
+    Args:
+        timestamp: 时间戳（毫秒）
+        request_id: 请求ID
+        token: 用户token
+        user_agent: 用户代理字符串
+        chat_id: 聊天ID
+        
+    Returns:
+        查询参数字典
+    """
+    # 生成用户ID（从token中提取或生成假的）
+    user_id = "guest-user-" + str(abs(hash(token)) % 1000000)
+    
+    # 编码用户代理
+    encoded_user_agent = urllib.parse.quote_plus(user_agent)
+    
+    # 当前时间相关
+    current_time = datetime.now()
+    local_time = current_time.isoformat() + "Z"
+    utc_time = current_time.strftime("%a, %d %b %Y %H:%M:%S GMT")
+    
+    # 构建当前URL
+    current_url = f"https://chat.z.ai/c/{chat_id}" if chat_id else "https://chat.z.ai/"
+    pathname = f"/c/{chat_id}" if chat_id else "/"
+    
+    query_params = {
+        "timestamp": str(timestamp),
+        "requestId": request_id,
+        "version": "0.0.1",
+        "platform": "web",
+        "user_id": user_id,
+        "token": token,
+        "user_agent": encoded_user_agent,
+        "language": "zh-CN",
+        "languages": "zh-CN,en,en-GB,en-US",
+        "timezone": "Asia/Shanghai",
+        "cookie_enabled": "true",
+        "screen_width": "1536",
+        "screen_height": "864",
+        "screen_resolution": "1536x864",
+        "viewport_height": "331",
+        "viewport_width": "1528",
+        "viewport_size": "1528x331",
+        "color_depth": "24",
+        "pixel_ratio": "1.25",
+        "current_url": urllib.parse.quote_plus(current_url),
+        "pathname": pathname,
+        "search": "",
+        "hash": "",
+        "host": "chat.z.ai",
+        "hostname": "chat.z.ai",
+        "protocol": "https:",
+        "referrer": "",
+        "title": "Chat with Z.ai - Free AI Chatbot powered by GLM-4.5",
+        "timezone_offset": "-480",
+        "local_time": local_time,
+        "utc_time": utc_time,
+        "is_mobile": "false",
+        "is_touch": "false",
+        "max_touch_points": "10",
+        "browser_name": "Chrome",
+        "os_name": "Windows",
+        # "signature_timestamp": str(timestamp),  # 已移除签名相关参数
+    }
+    
+    return query_params
 
 
 def get_auth_token_sync() -> str:
@@ -303,21 +419,37 @@ class ZAITransformer:
         else:
             body["tools"] = None
 
+        # 生成时间戳和请求ID
+        timestamp = int(time.time() * 1000)  # 毫秒时间戳
+        request_id = generate_uuid()
+        
         # 构建请求配置
-        dynamic_headers = get_dynamic_headers(chat_id)
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0"
+        dynamic_headers = get_dynamic_headers(chat_id, user_agent)
+        
+        # 构建查询参数
+        query_params = build_query_params(timestamp, request_id, token, user_agent, chat_id)
+        
+        # 签名已强制禁用 - 不生成任何签名
+        # request_body_str = json.dumps(body, ensure_ascii=False, separators=(',', ':'))
+        # signature = generate_signature(request_body_str, str(timestamp))
+        
+        # 构建完整的URL（包含查询参数）
+        url_with_params = f"{self.api_url}?" + "&".join([f"{k}={v}" for k, v in query_params.items()])
+
+        headers = {
+            **dynamic_headers,  # 使用动态生成的headers
+            "Authorization": f"Bearer {token}",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        }
+        
+        # 签名功能已禁用
+        debug_log("  🔓 签名验证已禁用")
 
         config = {
-            "url": self.api_url,  # 使用原始URL
-            "headers": {
-                **dynamic_headers,  # 使用动态生成的headers
-                "Authorization": f"Bearer {token}",
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Pragma": "no-cache",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin",
-            },
+            "url": url_with_params,
+            "headers": headers,
         }
 
         debug_log("✅ 请求转换完成")

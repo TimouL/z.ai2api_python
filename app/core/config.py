@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     THINKING_MODEL: str = os.getenv("THINKING_MODEL", "GLM-4.5-Thinking")
     SEARCH_MODEL: str = os.getenv("SEARCH_MODEL", "GLM-4.5-Search")
     AIR_MODEL: str = os.getenv("AIR_MODEL", "GLM-4.5-Air")
+    GLM_46_MODEL: str = os.getenv("GLM_46_MODEL", "GLM-4.6")
+    GLM_46_THINKING_MODEL: str = os.getenv("GLM_46_THINKING_MODEL", "GLM-4.6-Thinking")
     
     # Server Configuration
     LISTEN_PORT: int = int(os.getenv("LISTEN_PORT", "8080"))

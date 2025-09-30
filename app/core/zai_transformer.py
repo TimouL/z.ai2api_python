@@ -256,6 +256,8 @@ class ZAITransformer:
             settings.THINKING_MODEL: "0727-360B-API",  # GLM-4.5-Thinking
             settings.SEARCH_MODEL: "0727-360B-API",  # GLM-4.5-Search
             settings.AIR_MODEL: "0727-106B-API",  # GLM-4.5-Air
+            settings.GLM_46_MODEL: "GLM-4-6-API-V1",  # GLM-4.6
+            settings.GLM_46_THINKING_MODEL: "GLM-4-6-API-V1",  # GLM-4.6-Thinking
         }
 
     async def get_token(self) -> str:
@@ -310,7 +312,9 @@ class ZAITransformer:
 
         # 确定请求的模型特性
         requested_model = request.get("model", settings.PRIMARY_MODEL)
-        is_thinking = requested_model == settings.THINKING_MODEL or request.get("reasoning", False)
+        is_thinking = (requested_model == settings.THINKING_MODEL or 
+                      requested_model == settings.GLM_46_THINKING_MODEL or 
+                      request.get("reasoning", False))
         is_search = requested_model == settings.SEARCH_MODEL
         is_air = requested_model == settings.AIR_MODEL
 

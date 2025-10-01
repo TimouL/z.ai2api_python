@@ -60,31 +60,62 @@ class TokenManager:
     def _load_tokens(self) -> None:
         """Load tokens from file"""
         try:
-            if not os.path.exists(self.token_file_path):
-                debug_log(f"Token文件不存在: {self.token_file_path}")
-                # Fallback to BACKUP_TOKEN if file doesn't exist
+            new_tokens = []
+            
+            # 首先尝试从tokens.txt文件加载token
+            if os.path.exists(self.token_file_path):
+                with open(self.token_file_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                for line in lines:
+                    token = line.strip()
+                    if token and not token.startswith('#'):  # Skip empty lines and comments
+                        # Check if this token already exists to preserve failure count
+                        existing_token = next((t for t in self.tokens if t.token == token), None)
+                        if existing_token:
+                            new_tokens.append(existing_token)
+                        else:
+                            new_tokens.append(TokenInfo(token=token))
+                
+                if new_tokens:
+                    debug_log(f"从tokens.txt文件加载了 {len(new_tokens)} 个token")
+                else:
+                    debug_log("Token文件为空或无有效token")
+            
+            # 然后尝试从BACKUP_TOKEN环境变量加载token
+            try:
+                from app.core.config import settings
+                if hasattr(settings, 'BACKUP_TOKEN') and settings.BACKUP_TOKEN:
+                    # 支持多个BACKUP_TOKEN值，以逗号分隔
+                    backup_tokens = [token.strip() for token in settings.BACKUP_TOKEN.split(',') if token.strip()]
+                    
+                    # 添加不重复的backup token
+                    for backup_token in backup_tokens:
+                        # 检查是否已经存在相同的token
+                        existing_token = next((t for t in new_tokens if t.token == backup_token), None)
+                        if not existing_token:
+                            # 检查是否在原有tokens中存在，以保留失败计数
+                            old_token = next((t for t in self.tokens if t.token == backup_token), None)
+                            if old_token:
+                                new_tokens.append(old_token)
+                            else:
+                                new_tokens.append(TokenInfo(token=backup_token))
+                    
+                    debug_log(f"从BACKUP_TOKEN加载了 {len(backup_tokens)} 个token")
+            except ImportError:
+                pass
+            
+            # 如果没有任何token，尝试仅使用BACKUP_TOKEN
+            if not new_tokens:
                 try:
                     from app.core.config import settings
                     if hasattr(settings, 'BACKUP_TOKEN') and settings.BACKUP_TOKEN:
-                        self.tokens = [TokenInfo(token=settings.BACKUP_TOKEN)]
-                        debug_log("使用配置文件中的BACKUP_TOKEN作为备用")
+                        # 支持多个BACKUP_TOKEN值，以逗号分隔
+                        backup_tokens = [token.strip() for token in settings.BACKUP_TOKEN.split(',') if token.strip()]
+                        new_tokens = [TokenInfo(token=token) for token in backup_tokens]
+                        debug_log(f"仅使用BACKUP_TOKEN，共{len(backup_tokens)}个token")
                 except ImportError:
                     pass
-                return
-            
-            with open(self.token_file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            
-            new_tokens = []
-            for line in lines:
-                token = line.strip()
-                if token and not token.startswith('#'):  # Skip empty lines and comments
-                    # Check if this token already exists to preserve failure count
-                    existing_token = next((t for t in self.tokens if t.token == token), None)
-                    if existing_token:
-                        new_tokens.append(existing_token)
-                    else:
-                        new_tokens.append(TokenInfo(token=token))
             
             if new_tokens:
                 with self._lock:
@@ -94,14 +125,14 @@ class TokenManager:
                         self.current_index = 0
                     self.last_reload_time = time.time()
                 
-                debug_log(f"成功加载 {len(self.tokens)} 个token")
+                debug_log(f"总共加载了 {len(self.tokens)} 个token")
                 active_count = sum(1 for t in self.tokens if t.is_active)
                 debug_log(f"活跃token数量: {active_count}")
             else:
-                debug_log("Token文件为空或无有效token")
+                debug_log("没有找到任何可用的token")
                 
         except Exception as e:
-            debug_log(f"加载token文件失败: {e}")
+            debug_log(f"加载token失败: {e}")
     
     def _should_reload(self) -> bool:
         """Check if tokens should be reloaded"""

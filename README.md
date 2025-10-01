@@ -5,7 +5,7 @@
 ![FastAPI](https://img.shields.io/badge/framework-FastAPI-009688.svg)
 ![Version: 1.2.0](https://img.shields.io/badge/version-1.2.0-brightgreen.svg)
 
-轻量级 OpenAI API 兼容代理服务，通过 Claude Code Router 接入 Z.AI，支持 GLM-4.5 系列模型的完整功能。
+轻量级 OpenAI API 兼容代理服务，通过 Claude Code Router 接入 Z.AI，支持 GLM-4.6 系列模型的完整功能。
 
 ## ✨ 核心特性
 
@@ -109,7 +109,7 @@ tools = [{
 
 # 使用工具
 response = client.chat.completions.create(
-    model="GLM-4.5",
+    model="GLM-4.6",
     messages=[{"role": "user", "content": "北京天气怎么样？"}],
     tools=tools,
     tool_choice="auto"
@@ -120,7 +120,7 @@ response = client.chat.completions.create(
 
 ```python
 response = client.chat.completions.create(
-    model="GLM-4.5-Thinking",
+    model="GLM-4.6-Thinking",
     messages=[{"role": "user", "content": "解释量子计算"}],
     stream=True
 )
@@ -150,13 +150,104 @@ for chunk in response:
 | `TOOL_SUPPORT`        | `true`                                    | Function Call 功能开关 |
 | `SKIP_AUTH_TOKEN`     | `false`                                   | 跳过认证令牌验证       |
 | `SCAN_LIMIT`          | `200000`                                  | 扫描限制               |
-| `BACKUP_TOKEN`        | `eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...` | Z.ai 固定访问令牌      |
+| `BACKUP_TOKEN`        | `eyJhbGciO...`                            | 固定访问令牌，多个以','分隔|
+| `TOKEN_FILE_PATH`     | `./tokens.txt`                            | Token文件路径          |
+| `TOKEN_MAX_FAILURES`  | `3`                                       | Token最大失败次数      |
+| `TOKEN_RELOAD_INTERVAL`| `60`                                     | Token重载间隔(秒)      |
 
 ### 思考内容处理策略
 
 - `think` - 转换为 `<thinking>` 标签（OpenAI 兼容）
 - `strip` - 移除思考内容
 - `raw` - 保留原始格式
+
+## 🔑 Token 轮询管理
+
+系统支持智能 Token 轮询管理，可以在多个 Token 之间自动切换，实现负载均衡和容错处理。
+
+### Token 来源
+
+系统按以下优先级加载 Token：
+
+1. **tokens.txt 文件** - 在项目根目录创建 `tokens.txt` 文件，每行一个 Token
+2. **BACKUP_TOKEN 环境变量** - 支持多个 Token，以逗号分隔
+
+### tokens.txt 文件格式
+
+```
+# 这是注释，会被忽略
+sk-your-first-token-here
+sk-your-second-token-here
+sk-your-third-token-here
+```
+
+### BACKUP_TOKEN 环境变量格式
+
+```bash
+# 单个 Token
+BACKUP_TOKEN=sk-your-token-here
+
+# 多个 Token（以逗号分隔）
+BACKUP_TOKEN=sk-first-token,sk-second-token,sk-third-token
+```
+
+### Token 轮询机制
+
+- **轮询策略**：采用轮询（Round-Robin）算法，依次使用每个可用 Token
+- **失败处理**：当 Token 失败时，系统会标记失败次数，达到最大失败次数后自动禁用
+- **自动恢复**：禁用的 Token 会在重新加载时重置状态
+- **去重机制**：自动去除重复的 Token，确保每个 Token 只使用一次
+- **状态保持**：保留已有 Token 的失败计数和使用状态
+
+### Token 配置参数
+
+| 参数                 | 默认值 | 说明                         |
+| -------------------- | ------ | ---------------------------- |
+| `TOKEN_FILE_PATH`    | `./tokens.txt` | Token 文件路径               |
+| `TOKEN_MAX_FAILURES` | `3`    | Token 最大失败次数           |
+| `TOKEN_RELOAD_INTERVAL` | `60`  | Token 重载间隔（秒）         |
+
+### 使用示例
+
+#### 1. 仅使用 tokens.txt
+
+创建 `tokens.txt` 文件：
+```
+sk-token-1
+sk-token-2
+sk-token-3
+```
+
+#### 2. 仅使用 BACKUP_TOKEN
+
+在 `.env` 文件中配置：
+```env
+BACKUP_TOKEN=sk-token-1,sk-token-2,sk-token-3
+```
+
+#### 3. 同时使用 tokens.txt 和 BACKUP_TOKEN
+
+系统会合并两个来源的 Token，自动去重：
+
+- `tokens.txt` 包含：`sk-token-1`, `sk-token-2`
+- `BACKUP_TOKEN` 包含：`sk-token-2`, `sk-token-3`
+- 最终 Token 池：`sk-token-1`, `sk-token-2`, `sk-token-3`
+
+### Token 状态监控
+
+系统提供了 Token 状态统计接口，可以查看：
+
+- Token 总数
+- 活跃 Token 数量
+- 失败 Token 数量
+- 每个 Token 的详细信息（预览、状态、失败次数等）
+
+### 最佳实践
+
+1. **Token 分散**：将 Token 分散存储在 `tokens.txt` 和 `BACKUP_TOKEN` 中
+2. **定期更新**：定期检查 Token 有效性，及时替换失效的 Token
+3. **监控状态**：关注 Token 失败情况，及时调整配置
+4. **合理设置**：根据 API 调用频率调整 `TOKEN_MAX_FAILURES` 和 `TOKEN_RELOAD_INTERVAL`
 
 ## 🎯 使用场景
 
@@ -174,7 +265,7 @@ client = OpenAI(
 # 智能客服
 def chat_with_ai(message):
     response = client.chat.completions.create(
-        model="GLM-4.5",
+        model="GLM-4.6",
         messages=[{"role": "user", "content": message}]
     )
     return response.choices[0].message.content
@@ -279,6 +370,9 @@ A:
 - **GLM-4.5-Thinking**: 需要了解推理过程的场景
 - **GLM-4.5-Search**: 需要实时信息的场景
 - **GLM-4.5-Air**: 高并发、低延迟要求的场景
+- **GLM-4.6**: 最新模型，性能和效果最佳
+- **GLM-4.6-Thinking**: 模型推理过程
+
 
 **Q: 如何自定义配置？**  
 A: 通过环境变量配置，推荐使用 `.env` 文件。

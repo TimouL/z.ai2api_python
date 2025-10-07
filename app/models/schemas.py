@@ -55,7 +55,8 @@ class UpstreamRequest(BaseModel):
     id: Optional[str] = None
     mcp_servers: Optional[List[str]] = None
     model_item: Optional[ModelItem] = None
-    tool_servers: Optional[List[str]] = None
+    tool_servers: Optional[List[str]] = []  # 默认为空数组，匹配Go代码
+    tools: Optional[List[Dict[str, Any]]] = None  # 添加tools字段
     variables: Optional[Dict[str, str]] = None
     model_config = {"protected_namespaces": ()}
 

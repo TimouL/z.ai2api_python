@@ -388,10 +388,14 @@ class ZAITransformer:
             "id": generate_uuid(),
         }
 
-        # 处理工具支持
-        if settings.TOOL_SUPPORT and not is_thinking and request.get("tools"):
+        # 处理工具支持 - 更简化的方式，直接传递tools和tool_servers
+        # 参考Go代码：直接设置tool_servers为空数组，让Z.AI自行处理工具
+        body["tool_servers"] = []  # Go代码中的ToolServers: []string{}
+        
+        if settings.TOOL_SUPPORT and request.get("tools"):
+            # 将OpenAI格式的tools转换为Z.AI格式
             body["tools"] = request["tools"]
-            debug_log(f"启用工具支持: {len(request['tools'])} 个工具")
+            debug_log(f"✅ 传递工具定义到Z.AI: {len(request['tools'])} 个工具")
         else:
             body["tools"] = None
 

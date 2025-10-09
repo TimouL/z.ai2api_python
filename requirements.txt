@@ -8,3 +8,4 @@ typing-inspection
 fake-useragent
 brotli
 httpx
+python-dotenv

@@ -90,7 +90,17 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                         transformed["config"]["headers"]["Authorization"] = f"Bearer {new_token}"
                         current_token = new_token
 
-                    async with httpx.AsyncClient(timeout=60.0) as client:
+                    # 配置代理（如果有）
+                    # httpx 使用 HTTPS_PROXY 环境变量或直接传入 proxy 参数
+                    proxy = None
+                    if settings.HTTPS_PROXY:
+                        proxy = settings.HTTPS_PROXY
+                        debug_log(f"🌐 使用代理: {proxy}")
+                    elif settings.HTTP_PROXY:
+                        proxy = settings.HTTP_PROXY
+                        debug_log(f"🌐 使用代理: {proxy}")
+                    
+                    async with httpx.AsyncClient(timeout=60.0, proxy=proxy) as client:
                         # 发送请求到上游
                         # debug_log(f"🎯 发送请求到 Z.AI: {transformed['config']['url']}")
                         async with client.stream(

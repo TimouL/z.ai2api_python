@@ -10,11 +10,11 @@
 ## ✨ 核心特性
 
 - 🔌 **完全兼容 OpenAI API** - 无缝集成现有应用
-- 🤖 **Claude Code 支持** - 通过 Claude Code Router 接入 Claude Code (**CCR 工具请升级到 v1.0.47 以上**)
+- 🤖 **Cline、Roo Code、Kilo Code 支持（不支持CC）** 
 - 🚀 **高性能流式响应** - Server-Sent Events (SSE) 支持
 - 🛠️ **增强工具调用** - 改进的 Function Call 实现
 - 🧠 **思考模式支持** - 智能处理模型推理过程
-- 🔍 **搜索模型集成** - GLM-4.5-Search 网络搜索能力
+- 🔍 **搜索模型集成** - GLM-4.5-Search 网络搜索能力(有问题...)
 - 🐳 **Docker 部署** - 一键容器化部署
 - 🛡️ **会话隔离** - 匿名模式保护隐私
 - 🔧 **灵活配置** - 环境变量灵活配置
